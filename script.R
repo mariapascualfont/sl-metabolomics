@@ -4,7 +4,7 @@ library(ggplot2)
 
 # Read table and delete columns from previous statistical analysis
 
-df <- read_excel("~/Desktop/Bioinformatics/S5/SL/project/41598_2018_29592_MOESM2_ESM.xlsx")
+df <- read_excel("C:/Users/mirei/Documents/Bioinf_2/3r_any/1r_quatri/Statistics/Project/41598_2018_29592_MOESM2_ESM.xlsx")
 df_clean <- df[, 15:ncol(df), drop = FALSE]
 df_clean <- as.data.frame(df_clean)
 row.names(df_clean) <- df_clean[[1]]
@@ -12,12 +12,12 @@ df_clean <- df_clean[, -1, drop = FALSE]
 
 # Retrieve relevant metadata information (sex and label)
 sample_labels <- as.character(unlist(df_clean["label", ]))
-sex <- as.character(unlist(df_clean["comment", ]))
+sex_chr <- as.character(unlist(df_clean["comment", ]))
 
 
 # Delete rows from unnecessary metadata information
 metabolomics <- df_clean[!rownames(df_clean) %in% c("mx class","mx sample", "comment",
-  "species","organ","treatment","label"), ]
+                                                    "species","organ","treatment","label"), ]
 
 # Transpose, rename rows and convert measures to numeric
 metabolomics <- t(metabolomics)
@@ -28,7 +28,8 @@ metabolomics[] <- lapply(metabolomics, function(x) {
 })
 
 # Add outcome variable (sex)
-metabolomics$sex <- factor(sex)
+metabolomics$sex <- factor(sex_chr)
+sex <- metabolomics$sex
 
 # Basic statistics 
 
@@ -36,12 +37,16 @@ head(metabolomics)
 str(metabolomics)
 table(metabolomics$sex)
 
+
 X   <- metabolomics[, colnames(metabolomics) != "sex"]
+
 
 # Do some check in the data for missing values and zero/negatives (for the log)
 sum(is.na(X))  
-sum(X <= 0, na.rm = TRUE) # There are 2 zero values         
+sum(X <= 0, na.rm = TRUE) # There are 2 0 values         
 dim(X)
+# Note: 61 Female / 60 Male samples (121 total). The paper's text says 60 + 60,
+# but its own Fig. 1A also shows 121 samples (e.g. X132_121), so all are kept.
 
 # Check the values of compound 109708 and creatinine,
 idx <- which(X <= 0, arr.ind = TRUE)
@@ -90,6 +95,8 @@ for (m in c("xylitol", "glucose", "xylose")) {
   qqnorm(Xlog[[m]],  main = paste(m, "log10")); qqline(Xlog[[m]])
 }
 dev.off()
+
+
 
 
 
