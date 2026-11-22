@@ -41,10 +41,10 @@ sex <- metabolomics$sex
 
 # Do some check in the data for missing values and zero/negatives (for the log)
 sum(is.na(X))  
-sum(X <= 0, na.rm = TRUE) # There are 2 negative values         
+sum(X <= 0, na.rm = TRUE) # There are 2 zero values         
 dim(X)
 
-# Check the negative values of compound 109708 and creatinine,
+# Check the values of compound 109708 and creatinine,
 idx <- which(X <= 0, arr.ind = TRUE)
 data.frame(sample = rownames(X)[idx[, 1]],
            metabolite = colnames(X)[idx[, 2]],
