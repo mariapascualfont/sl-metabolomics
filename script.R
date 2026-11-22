@@ -52,6 +52,48 @@ data.frame(sample = rownames(X)[idx[, 1]],
 # This two values are the same ones found in the paper (page. 4), 
 # which they replaced it by 1.
 
+# So following the paper we replace those values by 1
+X_fix <- X
+X_fix[X_fix == 0] <- 1
+Xlog <- log10(X_fix)
+
+# Summary
+summ <- data.frame(
+  mean   = sapply(X, mean),
+  sd     = sapply(X, sd),
+  median = sapply(X, median),
+  skew   = sapply(X, function(x) mean(scale(x)^3))
+)
+head(summ) # they are very skewed, another reason to do the log transformation
+
+
+# Gaussian distribution with Shapiro-Wilk test
+shapiro_p <- function(M) sapply(M, function(x) shapiro.test(x)$p.value)
+p_raw <- shapiro_p(X_fix)
+p_log <- shapiro_p(Xlog)
+
+c(raw_gaussian = mean(p_raw > 0.05),     # paper states --> ~23% Gaussian (77% non-normal)
+  log_gaussian = mean(p_log > 0.05))
+# Here we obtain raw(12% gaussian) and log(22.2% gaussian)
+# 77,8% of the transformed data is not Guassian, 
+# similar to the 77% obtained in the paper.
+
+skew_raw <- sapply(X_fix, function(x) mean(scale(x)^3))
+skew_log <- sapply(Xlog,  function(x) mean(scale(x)^3))
+c(median_abs_skew_raw = median(abs(skew_raw)),
+  median_abs_skew_log = median(abs(skew_log))) # We reduced the skew median from ~2 to ~0.69
+
+# Some Q-Q plot to see comparison
+png("qq_plots.png", width = 1600, height = 1800, res = 200)
+par(mfrow = c(3, 2), mar = c(4, 4, 2, 1))
+for (m in c("xylitol", "glucose", "xylose")) {
+  qqnorm(X_fix[[m]], main = paste(m, "raw"));   qqline(X_fix[[m]])
+  qqnorm(Xlog[[m]],  main = paste(m, "log10")); qqline(Xlog[[m]])
+}
+dev.off()
+
+
+
 
 
 # Basic statistics
