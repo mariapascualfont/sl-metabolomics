@@ -1,5 +1,6 @@
 library(readxl)
 library(ggplot2)
+library(mdatools)
 
 
 # Read table and delete columns from previous statistical analysis
@@ -96,6 +97,59 @@ for (m in c("xylitol", "glucose", "xylose")) {
 }
 dev.off()
 
+# ---------------- PCA ----------------------
+
+# Samples with the most extreme values (|z| > 3 on log data)
+Z <- scale(Xlog)
+sort(rowSums(abs(Z) > 3), decreasing = TRUE)[1:10]
+
+
+pca_base <- prcomp(Xlog, center = TRUE, scale. = TRUE)
+var_exp  <- pca_base$sdev^2 / sum(pca_base$sdev^2)
+round(100 * var_exp[1:5], 2)
+# PC1 = 19.7%, PC2 = 5.9% (paper: 15.4% and 5.5%)
+
+# PCA model
+m <- pca(as.matrix(Xlog), ncomp = 8, center = TRUE, scale = TRUE)
+                   
+# Scree plot: variance per component and cumulative variance
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+
+plotVariance(m, type = "h", show.labels = TRUE, labels = "values",
+             main = "Variance Explained")
+plotCumVariance(m, type = "b", show.labels = TRUE,
+                main = "Cumulative Variance")
+par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1)
+
+cum <- cumsum(var_exp)
+which(cum >= 0.50)[1]     # PCs for 50% of the variance
+which(cum >= 0.80)[1]     # PCs for 80% of the variance
+round(100 * cum[c(2, 5, 10)], 1)
+# 10 PCs are needed for 50% of the variance and 40 PCs for 80%
+# So it is not low-dimensional: after PC1 the variance decays slowly. 
+# A 2D score plot therefore shows only about a quarter of the total variance, and a lack of
+# sex separation there does not rule out separation in other directions.
+# So the supervised analysis (PLS-DA) could be used.
+
+# Score plot
+plotScores(m, comp = c(1, 2), show.labels = FALSE,
+           main = "Scores PC1 vs PC2")
+# Score plot coloured by sex
+plotScores(m, comp = c(1, 2), cgroup = sex, show.labels = FALSE,
+           main = "Scores coloured by sex")
+
+# With labels
+plotScores(m, comp = c(1, 2), cgroup = sex, show.labels = TRUE,
+           main = "Scores with sample labels")
+                   
+# Residuals
+plotResiduals(m, ncomp = 5, show.labels = FALSE,
+              main = "Residuals (5 PCs)")
+                   
+
+
+               
+
 
 
 
@@ -105,7 +159,7 @@ dev.off()
 # Basic statistics
 # Gaussianity?
 #   Does it improve with transformation
-# Outliers?
+# Outliers? FALTA AIXÔ CREC
 # PCA
 #   Score-plot
 #   Scree-plot ?
