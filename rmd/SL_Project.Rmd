@@ -1,0 +1,366 @@
+---
+title: "Metabolomics Analysis: Data Pre-Processing and PCA"
+author:
+  - "Member 1: Sergi Boluda Baldellou"
+  - "Member 2: Mireia Fábregas Salazar"
+  - "Member 3: Adrán Lopez i Albiol"
+  - "Member 4: Maria Pascual Font"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    number_sections: false
+    code_folding: none
+    fig_caption: true
+---
+
+```{css, echo=FALSE}
+/* ---- Page layout ---- */
+body { font-size: 15px; line-height: 1.6; }
+.main-container { max-width: 1100px; }
+
+/* ---- Header ---- */
+h1.title {
+    font-weight: 800;
+    color: #405875;
+}
+
+h4.author {
+    font-weight: 400;
+    font-style: italic;
+    color: #505050;
+    margin: 6px 0;
+}
+
+h4.date {
+    font-style: italic;
+    color: #666666;
+    margin-bottom: 25px;
+}
+
+.blank {
+    display: inline-block;
+    width: 280px;
+    border-bottom: 1px solid #777777;
+}
+/* ---- Section headings: bold, light-blue background ---- */
+h1, h2 {
+  font-weight: 700;
+  background-color: lightblue;
+  color: #12263f;
+  padding: 8px 14px;
+  border-radius: 4px;
+}
+h1 { font-size: 28px; margin-top: 30px; }
+h2 { font-size: 22px; margin-top: 30px; }
+
+/* ---- Separation lines, captions, code ---- */
+hr { border-top: 2px solid #9fb8c9; margin: 40px 0 10px 0; }
+p.caption { text-align: center; font-size: 13px; font-style: italic; color: #444; margin-top: 8px; }
+pre { border-left: 4px solid lightblue; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.align = "center")
+```
+
+This report documents the pre-processing, normality assessment and principal component analysis (PCA) of the metabolomics dataset from article 41598_2018_29592, comparing male and female samples.
+
+---
+
+# 0. Installing Packages and Project Setup
+
+Packages, output folders and a helper that saves every figure as a vector SVG file.
+
+```{r packages}
+library(readxl)
+library(ggplot2)
+library(mdatools)
+
+## Output folders (relative to rmd/)
+img_dir <- "../images"
+res_dir <- "../results"
+dir.create(img_dir, showWarnings = FALSE)
+dir.create(res_dir, showWarnings = FALSE)
+
+## Helper: draws a plot straight into an SVG file (vector format, so it keeps
+## the best possible resolution at any zoom level)
+save_plot <- function(file, plot_expr, width = 8, height = 6) {
+  svg(file, width = width, height = height)
+  on.exit(dev.off())
+  plot_expr
+  invisible(file)
+}
+```
+
+---
+
+# 1. Data Pre-Processing
+
+The raw Excel table is cleaned, transposed and converted to numeric, then checked for zeros and transformed.
+
+## 1.1 Data Frame Creation
+
+```{r data-frame}
+## Read table and delete columns from previous statistical analysis
+df <- read_excel("../data/41598_2018_29592_MOESM2_ESM.xlsx")
+df_clean <- df[, 15:ncol(df), drop = FALSE]
+df_clean <- as.data.frame(df_clean)
+
+row.names(df_clean) <- df_clean[[1]]
+df_clean <- df_clean[, -1, drop = FALSE]
+
+## Retrieve relevant metadata information (sex and label)
+sample_labels <- as.character(unlist(df_clean["label", ]))
+sex_chr <- as.character(unlist(df_clean["comment", ]))
+
+## Delete rows from unnecessary metadata information
+metabolomics <- df_clean[!rownames(df_clean) %in% c("mx class","mx sample", "comment",
+                                                    "species","organ","treatment","label"), ]
+
+## Transpose, rename rows and convert measures to numeric
+metabolomics <- t(metabolomics)
+metabolomics <- as.data.frame(metabolomics)
+rownames(metabolomics) <- sample_labels
+metabolomics[] <- lapply(metabolomics, function(x) {
+  as.numeric(as.character(x))
+})
+
+## Add outcome variable (sex)
+metabolomics$sex <- factor(sex_chr)
+sex <- metabolomics$sex
+
+## Save the clean data frame
+saveRDS(metabolomics, file.path(res_dir, "metabolomics_clean_df.rds"))
+```
+
+## 1.2 Basic Exploration
+
+```{r exploration}
+# Only the first columns are shown, the table is very wide
+head(metabolomics[, c(1:5, ncol(metabolomics))])
+str(metabolomics, list.len = 5)
+table(metabolomics$sex)
+
+# Matrix with the metabolite measures only (outcome removed)
+X <- metabolomics[, colnames(metabolomics) != "sex"]
+```
+
+The dataset contains 61 Female and 60 Male samples (121 in total). The text of the paper says 60 + 60, but its own Fig. 1A also shows 121 samples (e.g. X132_121), so all of them are kept.
+
+## 1.3 Missing Values, Zeros and Log Transformation
+
+We check for missing values and for zero or negative values, which would break the logarithm.
+
+```{r missing-zeros}
+# Checking the data for missing values and zero/negatives (for the log)
+sum(is.na(X))
+sum(X <= 0, na.rm = TRUE)
+dim(X)
+```
+
+There are two zero values. We locate them below (compound 109708 and creatinine).
+
+```{r zero-values}
+# Check the values of compound 109708 and creatinine
+idx <- which(X <= 0, arr.ind = TRUE)
+zero_values <- data.frame(sample = rownames(X)[idx[, 1]],
+                          metabolite = colnames(X)[idx[, 2]],
+                          value = X[idx])
+zero_values
+```
+
+These two values are the same ones found in the paper (page 4), where they were replaced by 1. Following the paper, we do the same before applying the log10 transformation.
+
+```{r log-transform}
+# Replace zeros by 1 (as in the paper) and apply log10
+X_fix <- X
+X_fix[X_fix == 0] <- 1
+Xlog <- log10(X_fix)
+
+## Save the corrected and log-transformed matrices
+saveRDS(X_fix, file.path(res_dir, "X_fix_zeros_replaced.rds"))
+saveRDS(Xlog,  file.path(res_dir, "Xlog_log10_transformed.rds"))
+write.csv(zero_values, file.path(res_dir, "zero_values_replaced.csv"), row.names = FALSE)
+```
+
+## 1.4 Descriptive Summary
+
+```{r summary}
+# Summary
+summ <- data.frame(
+  mean   = sapply(X, mean),
+  sd     = sapply(X, sd),
+  median = sapply(X, median),
+  skew   = sapply(X, function(x) mean(scale(x)^3))
+)
+
+head(summ)
+write.csv(summ, file.path(res_dir, "descriptive_summary_raw.csv"))
+```
+
+The metabolites are very skewed, which is another reason to apply the log transformation.
+
+## 1.5 Gaussianity Assessment
+
+We use the Shapiro-Wilk test and the skewness to see whether the log transformation improves normality.
+
+```{r shapiro}
+# Gaussian distribution with Shapiro-Wilk test
+shapiro_p <- function(M) sapply(M, function(x) shapiro.test(x)$p.value)
+p_raw <- shapiro_p(X_fix)
+p_log <- shapiro_p(Xlog)
+
+c(raw_gaussian = mean(p_raw > 0.05),
+  log_gaussian = mean(p_log > 0.05))
+```
+
+We obtain 12% Gaussian metabolites on the raw data and 22.2% after the log10 transformation, so 77.8% of the metabolites still fail the test. This is close to the 77% non-normal (~23% Gaussian) reported in the paper.
+
+```{r skewness}
+# Skewness before and after the transformation
+skew_raw <- sapply(X_fix, function(x) mean(scale(x)^3))
+skew_log <- sapply(Xlog,  function(x) mean(scale(x)^3))
+c(median_abs_skew_raw = median(abs(skew_raw)),
+  median_abs_skew_log = median(abs(skew_log)))
+
+# Store the per-metabolite normality results
+normality <- data.frame(shapiro_p_raw = p_raw, shapiro_p_log = p_log,
+                        skew_raw = skew_raw, skew_log = skew_log)
+write.csv(normality, file.path(res_dir, "normality_shapiro_skewness.csv"))
+```
+
+The log transformation reduces the median absolute skewness from ~2 to ~0.69.
+
+## 1.6 Q-Q Plots
+
+Q-Q plots of three example metabolites, before and after the transformation.
+
+```{r qq-plots, fig.cap="Normal Q-Q plots of xylitol, glucose and xylose: raw data (left) versus log10-transformed data (right).", out.width="75%"}
+# Some Q-Q plot to see comparison (raw vs log10)
+qq_file <- file.path(img_dir, "qq_plots_raw_vs_log10_xylitol_glucose_xylose.svg")
+save_plot(qq_file, {
+  par(mfrow = c(3, 2), mar = c(4, 4, 2, 1))
+  for (met in c("xylitol", "glucose", "xylose")) {
+    qqnorm(X_fix[[met]], main = paste(met, "raw"));   qqline(X_fix[[met]])
+    qqnorm(Xlog[[met]],  main = paste(met, "log10")); qqline(Xlog[[met]])
+  }
+}, width = 8, height = 9)
+knitr::include_graphics(qq_file)
+```
+
+---
+
+# 2. Principal Component Analysis (PCA)
+
+PCA is applied to the log-transformed, centered and scaled data to explore the structure of the samples and the separation by sex.
+
+## 2.1 Extreme Values per Sample
+
+```{r extreme-values}
+# Samples with the most extreme values (|z| > 3 on log data)
+Z <- scale(Xlog)
+extreme_counts <- sort(rowSums(abs(Z) > 3), decreasing = TRUE)
+extreme_counts[1:10]
+write.csv(data.frame(sample = names(extreme_counts), n_extreme = extreme_counts),
+          file.path(res_dir, "extreme_values_per_sample.csv"), row.names = FALSE)
+```
+
+## 2.2 PCA with prcomp
+
+```{r prcomp}
+pca_base <- prcomp(Xlog, center = TRUE, scale. = TRUE)
+var_exp  <- pca_base$sdev^2 / sum(pca_base$sdev^2)
+round(100 * var_exp[1:5], 2)
+saveRDS(pca_base, file.path(res_dir, "pca_prcomp.rds"))
+```
+
+PC1 explains 19.7% and PC2 5.9% of the variance (the paper reports 15.4% and 5.5%).
+
+## 2.3 PCA Model (mdatools)
+
+```{r pca-mdatools}
+# PCA model
+m <- pca(as.matrix(Xlog), ncomp = 8, center = TRUE, scale = TRUE)
+saveRDS(m, file.path(res_dir, "pca_mdatools_model.rds"))
+```
+
+## 2.4 Variance Explained (Scree Plot)
+
+```{r scree, fig.cap="Variance explained by each principal component (left) and cumulative variance (right).", out.width="95%"}
+# Scree plot: variance per component and cumulative variance
+scree_file <- file.path(img_dir, "pca_scree_variance_and_cumulative_variance.svg")
+save_plot(scree_file, {
+  par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+  plotVariance(m, type = "h", show.labels = TRUE, labels = "values",
+               main = "Variance Explained")
+  plotCumVariance(m, type = "b", show.labels = TRUE,
+                  main = "Cumulative Variance")
+}, width = 12, height = 5)
+knitr::include_graphics(scree_file)
+```
+
+```{r cum-variance}
+cum <- cumsum(var_exp)
+which(cum >= 0.50)[1]     # PCs for 50% of the variance
+which(cum >= 0.80)[1]     # PCs for 80% of the variance
+round(100 * cum[c(2, 5, 10)], 1)
+
+# Variance table of all components
+var_table <- data.frame(PC = seq_along(var_exp),
+                        variance_pct   = 100 * var_exp,
+                        cumulative_pct = 100 * cum)
+write.csv(var_table, file.path(res_dir, "pca_variance_table.csv"), row.names = FALSE)
+```
+
+10 PCs are needed for 50% of the variance and 40 PCs for 80%. The data is therefore not low-dimensional: after PC1 the variance decays slowly. A 2D score plot shows only about a quarter of the total variance, so a lack of sex separation there does not rule out separation in other directions. For this reason a supervised analysis (PLS-DA) could be used.
+
+## 2.5 Score Plots
+
+```{r scores-plain, fig.cap="PCA scores on PC1 and PC2.", out.width="70%"}
+# Score plot
+scores_file <- file.path(img_dir, "pca_scores_pc1_vs_pc2.svg")
+save_plot(scores_file, {
+  plotScores(m, comp = c(1, 2), show.labels = FALSE,
+             main = "Scores PC1 vs PC2")
+})
+knitr::include_graphics(scores_file)
+```
+
+```{r scores-sex, fig.cap="PCA scores on PC1 and PC2, coloured by sex.", out.width="70%"}
+# Score plot coloured by sex
+scores_sex_file <- file.path(img_dir, "pca_scores_pc1_vs_pc2_coloured_by_sex.svg")
+save_plot(scores_sex_file, {
+  plotScores(m, comp = c(1, 2), cgroup = sex, show.labels = FALSE,
+             main = "Scores coloured by sex")
+})
+knitr::include_graphics(scores_sex_file)
+```
+
+```{r scores-labels, fig.cap="PCA scores on PC1 and PC2, coloured by sex and labelled with the sample names.", out.width="85%"}
+# With labels
+scores_lab_file <- file.path(img_dir, "pca_scores_pc1_vs_pc2_with_sample_labels.svg")
+save_plot(scores_lab_file, {
+  plotScores(m, comp = c(1, 2), cgroup = sex, show.labels = TRUE,
+             main = "Scores with sample labels")
+}, width = 10, height = 8)
+knitr::include_graphics(scores_lab_file)
+```
+
+## 2.6 Residuals
+
+```{r residuals, fig.cap="Residuals of the PCA model with 5 components.", out.width="70%"}
+resid_file <- file.path(img_dir, "pca_residuals_5_components.svg")
+save_plot(resid_file, {
+  plotResiduals(m, ncomp = 5, show.labels = FALSE,
+                main = "Residuals (5 PCs)")
+})
+knitr::include_graphics(resid_file)
+```
