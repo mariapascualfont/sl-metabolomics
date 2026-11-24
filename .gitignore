@@ -1,0 +1,11 @@
+# Excel data
+*.xlsx
+
+# R objects
+*.rds
+
+# CSV tables
+*.csv
+
+# SVG figures
+*.svg
